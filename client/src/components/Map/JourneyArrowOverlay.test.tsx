@@ -33,6 +33,7 @@ interface PolylineProps {
   positions: [number, number][]
   pathOptions?: Record<string, unknown>
   pane?: string
+  children?: React.ReactNode
 }
 
 vi.mock('react-leaflet', () => ({
@@ -46,13 +47,18 @@ vi.mock('react-leaflet', () => ({
       data-icon-html={icon?.options?.html ?? ''}
     />
   ),
-  Polyline: ({ positions, pathOptions, pane }: PolylineProps) => (
+  Polyline: ({ positions, pathOptions, pane, children }: PolylineProps) => (
     <div
       data-testid="journey-line"
       data-pane={pane ?? ''}
       data-point-count={positions.length}
       data-path-options={JSON.stringify(pathOptions ?? null)}
-    />
+    >
+      {children}
+    </div>
+  ),
+  Tooltip: ({ children }: { children?: React.ReactNode }) => (
+    <div data-testid="journey-tooltip">{children}</div>
   ),
   useMap: () => leaflet.map,
 }))
@@ -101,10 +107,12 @@ describe('JourneyArrowOverlay', () => {
     enable(true)
     render(<JourneyArrowOverlay />)
     const lines = screen.getAllByTestId('journey-line')
-    // One leg, drawn twice: the white casing under the dashed violet line.
-    expect(lines).toHaveLength(2)
+    // One leg: the white casing, the dashed violet line over it, and the
+    // transparent band that catches the pointer.
+    expect(lines).toHaveLength(3)
     expect(JSON.parse(lines[0].dataset.pathOptions!).dashArray).toBeUndefined()
     expect(JSON.parse(lines[1].dataset.pathOptions!).dashArray).toBe('9, 7')
+    expect(JSON.parse(lines[2].dataset.pathOptions!).opacity).toBe(0)
     // Two city pills and one arrowhead pill.
     expect(screen.getAllByTestId('journey-marker')).toHaveLength(3)
   })
@@ -140,7 +148,8 @@ describe('JourneyArrowOverlay', () => {
     enable(true)
     render(<JourneyArrowOverlay />)
     const pane = leaflet.panes.get('journey-overview')
-    expect(pane?.style.pointerEvents).toBe('none')
+    // Interactive, so the pills and the hit band can be hovered at all.
+    expect(pane?.style.pointerEvents).toBe('auto')
     // Above the day route and booking arcs (400), below the endpoints (650).
     expect(Number(pane?.style.zIndex)).toBeGreaterThan(400)
     expect(Number(pane?.style.zIndex)).toBeLessThan(650)
@@ -148,10 +157,55 @@ describe('JourneyArrowOverlay', () => {
       expect(el.dataset.pane).toBe('journey-overview')
       expect(el.dataset.interactive).toBe('false')
     }
+    // The two DRAWN lines stay non-interactive so a click reaches the map under
+    // them; only the invisible band is a target.
+    const drawn = screen.getAllByTestId('journey-line')
+      .filter(el => JSON.parse(el.dataset.pathOptions!).opacity !== 0)
+    expect(drawn).toHaveLength(2)
     for (const el of screen.getAllByTestId('journey-line')) {
       expect(el.dataset.pane).toBe('journey-overview')
+    }
+    for (const el of drawn) {
       expect(JSON.parse(el.dataset.pathOptions!).interactive).toBe(false)
     }
+  })
+
+  it('says on hover how you travelled, when a booking records it', () => {
+    seedTrip()
+    enable(true)
+    render(<JourneyArrowOverlay reservations={[{
+      id: 1, trip_id: 1, title: 'TGV', status: 'confirmed', type: 'train', day_id: 2,
+      endpoints: [
+        { role: 'from', sequence: 0, name: 'Gare de Lyon', code: null, lat: PARIS[0], lng: PARIS[1], timezone: null, local_time: null, local_date: null },
+        { role: 'to', sequence: 1, name: 'Part-Dieu', code: null, lat: LYON[0], lng: LYON[1], timezone: null, local_time: null, local_date: null },
+      ],
+    }] as never} />)
+    const tip = screen.getByTestId('journey-tooltip')
+    expect(tip.textContent).toContain('Train')
+    expect(tip.textContent).toContain('Paris \u2192 Lyon')
+  })
+
+  it('names the two ends but claims no mode when nothing records one', () => {
+    seedTrip()
+    enable(true)
+    render(<JourneyArrowOverlay />)
+    const tip = screen.getByTestId('journey-tooltip')
+    expect(tip.textContent).toContain('Paris \u2192 Lyon')
+    // No booking, so no invented "Car".
+    expect(tip.textContent).not.toContain('Car')
+    expect(tip.querySelector('.trek-journey-tip')).toBeNull()
+  })
+
+  it('collapses every pill, leaving the body for the stylesheet to reveal', () => {
+    seedTrip()
+    enable(true)
+    render(<JourneyArrowOverlay />)
+    for (const el of screen.getAllByTestId('journey-marker')) {
+      // Zero-sized anchor + a body that index.css keeps hidden until hover.
+      expect(el.dataset.iconHtml).toContain('trek-journey-anchor')
+    }
+    const stops = screen.getAllByTestId('journey-marker').filter(m => m.dataset.iconHtml?.includes('trek-journey-dot'))
+    expect(stops).toHaveLength(2)
   })
 
   it('draws a labelled centre but no arrow for a trip that never leaves one city', () => {

@@ -1156,7 +1156,7 @@ export const MapView = memo(function MapView({
       ))}
       <PluginMapMarkers tripId={tripId} />
       <PluginMapLayers tripId={tripId} />
-      <JourneyArrowOverlay accommodations={accommodations} />
+      <JourneyArrowOverlay accommodations={accommodations} reservations={reservations} />
     </MapContainer>
     {isMobile && <LocationButton
       mode={trackingMode}

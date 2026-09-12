@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
   bearingDeg,
-  estimatePillWidth,
   legPillHtml,
   pointAlongArc,
   stopPillHtml,
@@ -74,9 +73,27 @@ describe('legPillHtml', () => {
     expect(html).toContain('14 Apr')
   })
 
-  it('draws a bare arrowhead when there is no date to show', () => {
-    expect(legPillHtml('', 90)).toContain(JOURNEY_ARROW_COLOR)
-    expect(legPillHtml('', 90)).not.toContain('<span style="white-space:nowrap')
+  it('hangs the pill off a zero-sized anchor so hovering cannot move it', () => {
+    // The dot/arrowhead is welded to its coordinate; only the body grows.
+    expect(legPillHtml('14 Apr', 0)).toContain('trek-journey-anchor')
+    expect(stopPillHtml('Lyon', '')).toContain('trek-journey-anchor')
+  })
+
+  it('puts the date and the mode in the body, which is collapsed by default', () => {
+    const html = legPillHtml('14 Apr', 0, 'Flight', '<svg></svg>')
+    expect(html).toContain('trek-journey-body')
+    expect(html).toContain('Flight')
+    expect(html).toContain('<svg></svg>')
+  })
+
+  it('draws a bare arrowhead when there is nothing to reveal', () => {
+    const html = legPillHtml('', 90)
+    expect(html).toContain('trek-journey-head')
+    expect(html).not.toContain('trek-journey-body')
+  })
+
+  it('leaves out the mode row when no booking records one', () => {
+    expect(legPillHtml('14 Apr', 0)).not.toContain('trek-journey-mode')
   })
 
   it('escapes the date rather than letting it reach the DOM as markup', () => {
@@ -84,13 +101,24 @@ describe('legPillHtml', () => {
     expect(html).not.toContain('<img')
     expect(html).toContain('&lt;img')
   })
+
+  it('escapes the mode label too', () => {
+    const html = legPillHtml('14 Apr', 0, '<img src=x>', '')
+    expect(html).not.toContain('<img')
+    expect(html).toContain('&lt;img')
+  })
 })
 
 describe('stopPillHtml', () => {
   it('shows the city over its dates', () => {
-    const html = stopPillHtml('Lyon', '14–16 Apr')
+    const html = stopPillHtml('Lyon', '14-16 Apr')
     expect(html).toContain('Lyon')
-    expect(html).toContain('14–16 Apr')
+    expect(html).toContain('14-16 Apr')
+  })
+
+  it('always draws the dot, which is all there is until the pointer arrives', () => {
+    expect(stopPillHtml('Lyon', '14 Apr')).toContain('trek-journey-dot')
+    expect(stopPillHtml('Lyon', '14 Apr')).toContain(JOURNEY_ARROW_COLOR)
   })
 
   it('escapes a place name that came from an import', () => {
@@ -100,17 +128,6 @@ describe('stopPillHtml', () => {
   })
 
   it('leaves out the date line when the trip has no dates for it', () => {
-    expect(stopPillHtml('Lyon', '')).not.toContain('text-muted')
-  })
-})
-
-describe('estimatePillWidth', () => {
-  it('never estimates narrower than the bare arrowhead pill', () => {
-    expect(estimatePillWidth('', '')).toBe(52)
-  })
-
-  it('grows with the longer of the two lines', () => {
-    expect(estimatePillWidth('Lyon', '14–16 April 2026'))
-      .toBeGreaterThan(estimatePillWidth('Lyon', '14 Apr'))
+    expect(stopPillHtml('Lyon', '')).not.toContain('trek-journey-dates')
   })
 })

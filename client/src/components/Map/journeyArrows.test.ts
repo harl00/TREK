@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { buildJourneyLegs, buildJourneyStops, cityCandidates, CITY_RADIUS_KM } from './journeyArrows'
-import type { Accommodation, AssignmentsMap, Day } from '../../types'
+import { buildJourneyLegs, buildJourneyStops, cityCandidates, resolveLegMode, CITY_RADIUS_KM } from './journeyArrows'
+import type { Accommodation, AssignmentsMap, Day, Reservation } from '../../types'
 
 // Real coordinates, because the thresholds are in kilometres and a made-up grid
 // would prove the clustering works on a made-up grid. Versailles is a day out
@@ -314,5 +314,110 @@ describe('buildJourneyLegs', () => {
     const input = threeCities()
     expect(buildJourneyLegs(input).map(l => l.key)).toEqual(buildJourneyLegs(input).map(l => l.key))
     expect(new Set(buildJourneyLegs(input).map(l => l.key)).size).toBe(2)
+  })
+})
+
+describe('resolveLegMode', () => {
+  const stop = (label: string, at: [number, number], dayIds: number[]) => ({
+    key: `stop-${dayIds[0]}`, label, lat: at[0], lng: at[1], dayIds,
+    startDate: null, endDate: null, startDayNumber: dayIds[0], endDayNumber: dayIds[dayIds.length - 1],
+  })
+  const PARIS_STOP = stop('Paris', PARIS, [1, 2, 3])
+  const LYON_STOP = stop('Lyon', LYON, [4, 5])
+
+  const booking = (type: string, from: [number, number] | null, to: [number, number] | null, days: { day_id?: number; end_day_id?: number } = {}) => ({
+    id: Math.random(), trip_id: 1, title: type, status: 'confirmed', type, ...days,
+    endpoints: from && to
+      ? [
+        { role: 'from', sequence: 0, name: 'a', code: null, lat: from[0], lng: from[1], timezone: null, local_time: null, local_date: null },
+        { role: 'to', sequence: 1, name: 'b', code: null, lat: to[0], lng: to[1], timezone: null, local_time: null, local_date: null },
+      ]
+      : [],
+  }) as unknown as Reservation
+
+  it('says nothing when the trip records no bookings', () => {
+    expect(resolveLegMode(PARIS_STOP, LYON_STOP, [])).toBeNull()
+  })
+
+  it('reads the booking whose two ends match the leg', () => {
+    expect(resolveLegMode(PARIS_STOP, LYON_STOP, [booking('train', PARIS, LYON)])).toBe('train')
+  })
+
+  it('tolerates an airport well outside the city it serves', () => {
+    // Beauvais is 85 km from Paris and is still Paris's airport.
+    const BEAUVAIS: [number, number] = [49.4544, 2.1128]
+    expect(resolveLegMode(PARIS_STOP, LYON_STOP, [booking('flight', BEAUVAIS, LYON)])).toBe('flight')
+  })
+
+  it('ignores a booking that only matches one end', () => {
+    expect(resolveLegMode(PARIS_STOP, LYON_STOP, [booking('ferry', PARIS, MARSEILLE)])).toBeNull()
+  })
+
+  it('ignores a booking that is not a way of travelling', () => {
+    expect(resolveLegMode(PARIS_STOP, LYON_STOP, [booking('hotel', PARIS, LYON)])).toBeNull()
+  })
+
+  it('falls back to the day when an import carries no coordinates', () => {
+    // Day 4 is the first day in Lyon — the day the move lands. A booking with
+    // no endpoints at all is exactly what a typed-in or e-mail-imported one
+    // looks like, and its type is still the answer.
+    expect(resolveLegMode(PARIS_STOP, LYON_STOP, [booking('train', null, null, { day_id: 4 })])).toBe('train')
+  })
+
+  it('accepts a night train that departs the day before it arrives', () => {
+    // Day 3 is the last day in Paris; the move straddles 3 and 4.
+    expect(resolveLegMode(PARIS_STOP, LYON_STOP, [booking('train', null, null, { day_id: 3, end_day_id: 4 })])).toBe('train')
+  })
+
+  it('gives a one-day stop\u2019s booking to the leg that LEAVES it, not the one that arrives', () => {
+    // The case real data exposed. You reach Stockholm and leave it on the same
+    // date, so both legs touch day 26 and "does this booking touch the window"
+    // handed the overnight train OUT of Stockholm to the leg INTO it. What
+    // separates them is where the train lands: day 27, which is Bo.
+    const ALPS: [number, number] = [46.661, 8.744]
+    const STOCKHOLM: [number, number] = [59.325, 18.071]
+    const BO: [number, number] = [59.413, 9.066]
+    const alps = stop('Swiss Alps', ALPS, [24])
+    const sthlm = stop('Stockholm', STOCKHOLM, [26])
+    const bo = stop('Bo', BO, [27])
+    const train = booking('train', null, null, { day_id: 26, end_day_id: 27 })
+
+    expect(resolveLegMode(alps, sthlm, [train])).toBeNull()
+    expect(resolveLegMode(sthlm, bo, [train])).toBe('train')
+  })
+
+  it('lets a hire car held for days name the leg it finishes', () => {
+    // Picked up on day 27 and dropped on day 32: the move it carried is the one
+    // arriving on 32, not every leg in between.
+    const bo = stop('Bo', [59.413, 9.066], [27])
+    const oslo = stop('Oslo', [59.913, 10.739], [32])
+    const later = stop('Copenhagen', [55.687, 12.570], [34])
+    const car = booking('car', null, null, { day_id: 27, end_day_id: 32 })
+
+    expect(resolveLegMode(bo, oslo, [car])).toBe('car')
+    expect(resolveLegMode(oslo, later, [car])).toBeNull()
+  })
+
+  it('does not let the day rescue a booking we know goes somewhere else', () => {
+    // It has coordinates, they say Paris -> Marseille, and no day can overrule
+    // that: the leg is Paris -> Lyon.
+    expect(resolveLegMode(PARIS_STOP, LYON_STOP, [booking('ferry', PARIS, MARSEILLE, { day_id: 4 })])).toBeNull()
+  })
+
+  it('prefers the longest booking when several fit the same move', () => {
+    // The taxi to the airport and the flight are both on the departure day; the
+    // leg is the flight.
+    const CDG: [number, number] = [49.0097, 2.5479]
+    const modes = resolveLegMode(PARIS_STOP, LYON_STOP, [
+      booking('taxi', PARIS, CDG, { day_id: 3 }),
+      booking('flight', CDG, LYON, { day_id: 3 }),
+    ])
+    expect(modes).toBe('flight')
+  })
+
+  it('does not let a booking inside the stay name the journey out of it', () => {
+    // A local transit hop on day 1, deep inside the Paris stay, is not the move
+    // to Lyon — only days 3 and 4 straddle that.
+    expect(resolveLegMode(PARIS_STOP, LYON_STOP, [booking('transit', null, null, { day_id: 1 })])).toBeNull()
   })
 })

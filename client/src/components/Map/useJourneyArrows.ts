@@ -1,11 +1,15 @@
-import { useMemo } from 'react'
+import { createElement, useMemo } from 'react'
+import { renderIconMarkup } from '../../utils/iconMarkup'
+// The planner's own booking-type → icon table. A private copy of the ten
+// transport icons would be the fifth in this tree and the first to go stale.
+import { RES_ICONS } from '../Planner/DayPlanSidebar.constants'
 import { useTripStore } from '../../store/tripStore'
 import { useSettingsStore } from '../../store/settingsStore'
 import { useTranslation } from '../../i18n'
 import { geodesicArcs } from './flightGeodesy'
 import { buildJourneyStops, buildJourneyLegs, type JourneyLeg, type JourneyStop } from './journeyArrows'
 import { pointAlongArc, type ArcPoint } from './journeyArrowMarkup'
-import type { Accommodation } from '../../types'
+import type { Accommodation, Reservation } from '../../types'
 
 /**
  * The journey overview, derived once and handed to whichever renderer is
@@ -27,6 +31,7 @@ const ARROWHEAD_FRACTION = 0.62
  * invalidate the memo that derives the whole trip.
  */
 const NO_ACCOMMODATIONS: Accommodation[] = []
+const NO_RESERVATIONS: Reservation[] = []
 
 export interface JourneyArrowStop extends JourneyStop {
   /** "12–15 Apr", or "Days 3–5" on a trip planned without dates. */
@@ -40,6 +45,10 @@ export interface JourneyArrowLeg extends JourneyLeg {
   head: ArcPoint
   /** "14 Apr", or "Day 4" without dates. */
   dateLabel: string
+  /** "Flight", "Train" … in the user's language; empty when nothing says. */
+  modeLabel: string
+  /** The booking type's own lucide glyph, as SVG markup; empty with no mode. */
+  modeIcon: string
 }
 
 export interface JourneyArrows {
@@ -55,6 +64,12 @@ export interface UseJourneyArrowsOptions {
    * anchors each day on its own stops instead of on the hotel.
    */
   accommodations?: Accommodation[]
+  /**
+   * The trip's bookings — the only record of whether a move was a flight, a
+   * train or a ferry. Both shells already pass these to the map for the booking
+   * arcs, so this costs no new plumbing.
+   */
+  reservations?: Reservation[]
   /**
    * Leaflet's vector layers do not repeat across world copies and the GL
    * engines do — the same distinction geodesicArcs already draws. Passed rather
@@ -93,7 +108,24 @@ function formatDateRange(startIso: string, endIso: string, locale: string): stri
   return `${fmt.format(start)} – ${fmt.format(end)}`
 }
 
-export function useJourneyArrows({ accommodations = NO_ACCOMMODATIONS, wrapCopies }: UseJourneyArrowsOptions): JourneyArrows {
+/**
+ * The booking type's glyph as SVG markup, cached because the same handful of
+ * types repeat down a trip and serializing an icon is not free.
+ *
+ * `currentColor` so the glyph takes the colour of the text it sits beside,
+ * which is what keeps it legible in both themes without a second palette.
+ */
+const modeIcons = new Map<string, string>()
+function modeIconMarkup(mode: string): string {
+  const cached = modeIcons.get(mode)
+  if (cached !== undefined) return cached
+  const Icon = (RES_ICONS as Record<string, typeof RES_ICONS.flight | undefined>)[mode] ?? RES_ICONS.other
+  const markup = renderIconMarkup(createElement(Icon, { size: 11, strokeWidth: 2.25, color: 'currentColor' }))
+  modeIcons.set(mode, markup)
+  return markup
+}
+
+export function useJourneyArrows({ accommodations = NO_ACCOMMODATIONS, reservations = NO_RESERVATIONS, wrapCopies }: UseJourneyArrowsOptions): JourneyArrows {
   const enabled = useSettingsStore(s => s.settings.map_journey_arrows) === true
   const days = useTripStore(s => s.days)
   const assignments = useTripStore(s => s.assignments)
@@ -105,7 +137,7 @@ export function useJourneyArrows({ accommodations = NO_ACCOMMODATIONS, wrapCopie
     // sessions never ask for it.
     if (!enabled) return { enabled, stops: [], legs: [] }
 
-    const input = { days, assignments, accommodations }
+    const input = { days, assignments, accommodations, reservations }
 
     // `dayplan.dayN` rather than a second "Day {n}" of this layer's own: the
     // planner already prints day numbers with it in every locale, and the
@@ -134,10 +166,15 @@ export function useJourneyArrows({ accommodations = NO_ACCOMMODATIONS, wrapCopie
         head,
         dateLabel: leg.departDate
           ? formatDateRange(leg.departDate, leg.departDate, locale)
-          : t('map.journey.dayOne', { n: leg.departDayNumber }),
+          : t('dayplan.dayN', { n: leg.departDayNumber }),
+        // `reservations.type.*` already names every booking type in all 23
+        // locales — the overview calling a train something else would be a
+        // second vocabulary for one thing.
+        modeLabel: leg.mode ? t(`reservations.type.${leg.mode}`) : '',
+        modeIcon: leg.mode ? modeIconMarkup(leg.mode) : '',
       }]
     })
 
     return { enabled, stops, legs }
-  }, [enabled, days, assignments, accommodations, wrapCopies, t, locale])
+  }, [enabled, days, assignments, accommodations, reservations, wrapCopies, t, locale])
 }

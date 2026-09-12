@@ -89,44 +89,50 @@ export function pointAlongArc(arc: [number, number][], fraction: number): ArcPoi
 const PILL_FONT = 'font-family:var(--font-system);'
 
 /**
- * The arrowhead that rides the leg: a triangle rotated to the local heading,
- * with the travel date beside it in an upright frosted pill.
+ * Every pill hangs off a zero-sized box, and the marker is anchored on that box
+ * rather than on the pill.
+ *
+ * This is what lets a pill expand on hover without the thing it labels moving.
+ * Both renderers centre a marker element on its coordinate — Leaflet through
+ * `iconAnchor`, the GL engines through `translate(-50%, -50%)` — so centring the
+ * PILL would slide the dot sideways by half the newly-revealed width the moment
+ * the pointer touched it, and slide it back as the pointer chased it. A 0×0
+ * anchor is centred on nothing, so the dot stays put and the body grows out of
+ * it. It also means neither renderer has to estimate a pill's width any more.
+ */
+const ANCHOR_OPEN = '<span class="trek-journey-anchor">'
+const ANCHOR_CLOSE = '</span>'
+
+/**
+ * The arrowhead that rides the leg, collapsed to just the triangle until the
+ * pointer arrives — at which point it opens to the date and, when a booking
+ * says so, how you travelled.
  *
  * Only the triangle rotates. Turning the whole pill would point the arrow
  * correctly and leave the date upside down on every westbound leg, which is the
  * obvious version of this and the wrong one.
  */
-export function legPillHtml(dateLabel: string, bearing: number): string {
-  const head = `<span style="display:block;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:9px solid ${JOURNEY_ARROW_COLOR};transform:rotate(${bearing.toFixed(1)}deg)"></span>`
-  const date = dateLabel
-    ? `<span style="white-space:nowrap;font-size:11px;font-weight:600;line-height:1;color:var(--text-primary)">${escapeHtml(dateLabel)}</span>`
+export function legPillHtml(dateLabel: string, bearing: number, modeLabel = '', modeIcon = ''): string {
+  const head = `<span class="trek-journey-head" style="border-bottom-color:${JOURNEY_ARROW_COLOR};transform:rotate(${bearing.toFixed(1)}deg)"></span>`
+  const mode = modeLabel
+    ? `<span class="trek-journey-mode">${modeIcon}${escapeHtml(modeLabel)}</span>`
     : ''
-  return `<span style="display:inline-flex;align-items:center;gap:5px;padding:${dateLabel ? '4px 9px 4px 7px' : '5px'};border-radius:999px;background:var(--bg-card);border:1px solid var(--border-primary);box-shadow:0 2px 8px rgba(0,0,0,0.2);${PILL_FONT}">${head}${date}</span>`
+  const date = dateLabel ? `<span class="trek-journey-date">${escapeHtml(dateLabel)}</span>` : ''
+  const body = date || mode ? `<span class="trek-journey-body">${date}${mode}</span>` : ''
+  return `${ANCHOR_OPEN}<span class="trek-journey-pill trek-journey-leg" style="${PILL_FONT}">${head}${body}</span>${ANCHOR_CLOSE}`
 }
 
 /**
- * A city centre: its name over the dates you are there. The dot is drawn in the
- * overview's own colour so a stop reads as part of the same layer as the arcs
- * rather than as one more place marker.
+ * A city centre. Collapsed it is only its dot — which is the point of the
+ * redesign: fifteen open pills across Europe is a wall of text, fifteen dots is
+ * a route. The name and dates arrive on hover.
+ *
+ * The dot is drawn in the overview's own colour so a stop reads as part of the
+ * same layer as the arcs rather than as one more place marker.
  */
 export function stopPillHtml(label: string, dateLabel: string): string {
-  const dot = `<span style="display:block;width:9px;height:9px;border-radius:50%;background:${JOURNEY_ARROW_COLOR};border:2px solid ${JOURNEY_ARROW_CASING};box-sizing:content-box;flex-shrink:0"></span>`
-  const dates = dateLabel
-    ? `<span style="font-size:10.5px;font-weight:500;line-height:1.25;color:var(--text-muted)">${escapeHtml(dateLabel)}</span>`
-    : ''
-  const text = `<span style="display:flex;flex-direction:column;align-items:flex-start;white-space:nowrap"><span style="font-size:12.5px;font-weight:700;line-height:1.25;color:var(--text-primary)">${escapeHtml(label)}</span>${dates}</span>`
-  return `<span style="display:inline-flex;align-items:center;gap:7px;padding:5px 11px 5px 8px;border-radius:999px;background:var(--bg-card);border:1px solid var(--border-primary);box-shadow:0 3px 12px rgba(0,0,0,0.22);${PILL_FONT}">${dot}${text}</span>`
-}
-
-/**
- * A pill's rendered width, near enough for an icon anchor.
- *
- * Leaflet needs an `iconSize` before the element exists to measure, and the
- * endpoint markers in ReservationOverlay already estimate theirs the same way.
- * Overshooting only costs a slightly loose anchor; undershooting clips nothing,
- * because the pill is inline-flex and sizes itself.
- */
-export function estimatePillWidth(label: string, dateLabel: string): number {
-  const longest = Math.max(label.length, dateLabel.length)
-  return Math.max(52, Math.round(longest * 7 + 36))
+  const dot = `<span class="trek-journey-dot" style="background:${JOURNEY_ARROW_COLOR};border-color:${JOURNEY_ARROW_CASING}"></span>`
+  const dates = dateLabel ? `<span class="trek-journey-dates">${escapeHtml(dateLabel)}</span>` : ''
+  const body = `<span class="trek-journey-body"><span class="trek-journey-name">${escapeHtml(label)}</span>${dates}</span>`
+  return `${ANCHOR_OPEN}<span class="trek-journey-pill trek-journey-stop" style="${PILL_FONT}">${dot}${body}</span>${ANCHOR_CLOSE}`
 }

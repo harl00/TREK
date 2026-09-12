@@ -1,6 +1,11 @@
 import { haversineKm } from '../../utils/geo'
 import { getDayOrder, isDayInAccommodationRange } from '../../utils/dayOrder'
-import type { Accommodation, AssignmentsMap, Day } from '../../types'
+// The one exported copy of "which booking types are a way of travelling". Five
+// other copies of this list are spelled out across the planner; a sixth here
+// would be the one that silently disagrees.
+import { TRANSPORT_TYPES } from '../../utils/dayMerge'
+import { orderedEndpoints } from '../../utils/flightLegs'
+import type { Accommodation, AssignmentsMap, Day, Reservation } from '../../types'
 
 /**
  * The trip read as a journey rather than as a list of pins: which cities you are
@@ -66,12 +71,37 @@ export interface JourneyStop {
   endDayNumber: number
 }
 
+/**
+ * How far from a stop's centre a booking may start and still be that stop's
+ * booking.
+ *
+ * Much wider than CITY_RADIUS_KM, and for a different reason: this is not
+ * asking "is this the same city", it is asking "is this the booking that
+ * carried me off this leg". Airports are the whole problem — Malpensa is 50 km
+ * from Milan, Beauvais 85 km from Paris — and a leg whose two ends are hundreds
+ * of kilometres apart is not going to be confused with its neighbour by a
+ * generous radius. BOTH ends must match, which is what keeps it honest.
+ */
+const BOOKING_MATCH_KM = 100
+
+/**
+ * A booking type that is a way of getting somewhere, as the journey overview
+ * reports it. Exactly the set the day merger already recognises.
+ */
+export type JourneyLegMode = string
+
 /** The move between two consecutive city centres — one drawn arrow. */
 export interface JourneyLeg {
   key: string
   from: JourneyStop
   to: JourneyStop
   distanceKm: number
+  /**
+   * The booking that carried you, if the trip records one: 'flight', 'train',
+   * 'ferry' … `null` when nothing says, which is most legs on most trips and
+   * must stay a legible state rather than a guessed 'car'.
+   */
+  mode: JourneyLegMode | null
   /**
    * When the move happens, approximately: the first day you are in `to`. The
    * plan records no travel time at this altitude, and pretending otherwise
@@ -86,6 +116,13 @@ export interface JourneyArrowsInput {
   days: Day[]
   assignments: AssignmentsMap
   accommodations?: Accommodation[]
+  /**
+   * The trip's bookings, which are the only thing that knows a move was a
+   * flight rather than a drive. The per-place `transport_mode` fields cannot
+   * answer it — those are routing profiles (driving / walking / cycling), i.e.
+   * how to draw a line, not what kind of journey it was.
+   */
+  reservations?: Reservation[]
 }
 
 const hasCoords = (lat?: number | null, lng?: number | null): boolean =>
@@ -350,9 +387,100 @@ export function buildJourneyStops({ days, assignments, accommodations = [] }: Jo
   })
 }
 
+interface TransportBooking {
+  res: Reservation
+  /**
+   * The two ends, when the booking has them. Absent is common and must stay
+   * usable: a booking typed in by hand, or imported from a confirmation e-mail
+   * that named no airport, carries a type and a day and nothing else — which is
+   * still enough to say what the move was.
+   */
+  ends: { from: { lat: number; lng: number }; to: { lat: number; lng: number } } | null
+}
+
+/** Every booking that is a way of travelling, with its two ends where it has them. */
+function transportBookings(reservations: Reservation[]): TransportBooking[] {
+  return reservations.flatMap(r => {
+    if (!TRANSPORT_TYPES.has(r.type)) return []
+    const ordered = orderedEndpoints(r)
+    const ends = ordered.length >= 2
+      ? { from: ordered[0], to: ordered[ordered.length - 1] }
+      : null
+    return [{ res: r, ends }]
+  })
+}
+
+/**
+ * Which booking carried you along this leg.
+ *
+ * Geography first: a booking that starts near where the leg starts and ends
+ * near where it ends is that leg's journey, whatever days it claims. Requiring
+ * BOTH ends is what lets the radius be wide enough for an out-of-town airport
+ * without collecting the neighbouring leg's flight.
+ *
+ * Failing that, the day it departs. An imported booking often has no endpoint
+ * coordinates at all — only a type, a title and a day — and on the day the trip
+ * changes city that is enough to say what the move was. Both directions are
+ * accepted because a night train leaves the day before it arrives.
+ *
+ * When several bookings fit, the longest wins: a flight between the two cities
+ * and the taxi to the airport can both be on the departure day, and the leg is
+ * the flight.
+ */
+export function resolveLegMode(
+  from: JourneyStop,
+  to: JourneyStop,
+  reservations: Reservation[],
+  orderOf: (dayId: number) => number = id => id,
+): JourneyLegMode | null {
+  const candidates = transportBookings(reservations)
+  // The day the move LANDS. Everything below is measured against this one
+  // number, because it is what distinguishes the two legs that meet at a
+  // one-day stop — you arrive at Stockholm and leave it on the same date, and
+  // asking only "does this booking touch day 26" hands the overnight train out
+  // of Stockholm to the leg that arrives there.
+  const arrivalDay = orderOf(to.dayIds[0])
+  const departureDay = orderOf(from.dayIds[from.dayIds.length - 1])
+
+  const matchesGeography = (b: TransportBooking) =>
+    b.ends != null
+    && haversineKm(from, b.ends.from) <= BOOKING_MATCH_KM
+    && haversineKm(to, b.ends.to) <= BOOKING_MATCH_KM
+
+  /** Zero for a booking with no geometry, which only ever loses a tie-break. */
+  const spanKm = (b: TransportBooking) => (b.ends ? haversineKm(b.ends.from, b.ends.to) : 0)
+
+  const longest = (matches: TransportBooking[]) =>
+    matches.length === 0 ? null : matches.slice().sort((a, b) => spanKm(b) - spanKm(a))[0].res.type
+
+  const byGeography = longest(candidates.filter(matchesGeography))
+  if (byGeography) return byGeography
+
+  // Only bookings whose geography is UNKNOWN get a second chance here. One that
+  // carries coordinates has already been asked the better question and said no:
+  // letting the day rescue it would name this leg after a flight we know goes
+  // somewhere else entirely.
+  return longest(candidates.filter(b => {
+    if (b.ends != null || b.res.day_id == null) return false
+    const departs = orderOf(b.res.day_id)
+    // No end day means it began and finished the same day.
+    const arrives = b.res.end_day_id == null ? departs : orderOf(b.res.end_day_id)
+    // Lands when the leg lands, and did not set off before the stay it leaves
+    // was over. An overnight train satisfies both across two dates; a hire car
+    // held for five days satisfies them across five.
+    return arrives === arrivalDay && departs <= arrivalDay && departs >= departureDay
+  }))
+}
+
 /** The arrows: one per move between consecutive city centres. */
 export function buildJourneyLegs(input: JourneyArrowsInput): JourneyLeg[] {
   const stops = buildJourneyStops(input)
+  const reservations = input.reservations ?? []
+  // Bookings name a day by id; the comparisons above are about which day comes
+  // first, and ids are not that. An id the trip does not know sorts last, which
+  // keeps a stale booking from claiming the first leg.
+  const order = new Map((input.days ?? []).map(d => [d.id, getDayOrder(d, input.days)]))
+  const orderOf = (dayId: number) => order.get(dayId) ?? Number.MAX_SAFE_INTEGER
   return stops.slice(1).map((to, i) => {
     const from = stops[i]
     return {
@@ -360,6 +488,7 @@ export function buildJourneyLegs(input: JourneyArrowsInput): JourneyLeg[] {
       from,
       to,
       distanceKm: haversineKm(from, to),
+      mode: resolveLegMode(from, to, reservations, orderOf),
       departDate: to.startDate,
       departDayNumber: to.startDayNumber,
     }

@@ -10,7 +10,7 @@ import type mapboxgl from 'mapbox-gl'
 import { useSettingsStore } from '../../store/settingsStore'
 import { MapLayerSwitcher, type BaseLayer } from './MapLayerSwitcher'
 import { JourneyArrowsToggle } from './JourneyArrowsToggle'
-import { useJourneyArrows } from './useJourneyArrows'
+import { useJourneyArrows, type JourneyArrowLeg } from './useJourneyArrows'
 import { JOURNEY_ARROW_CASING, JOURNEY_ARROW_COLOR, legPillHtml, stopPillHtml } from './journeyArrowMarkup'
 import { useAuthStore } from '../../store/authStore'
 import { getCached, isLoading, fetchPhoto, onThumbReady, getAllThumbs } from '../../services/photoService'
@@ -66,6 +66,8 @@ const GPX_HIT_LAYER_ID = 'trip-gpx-hit'
 const SATELLITE_SOURCE_ID = 'trip-satellite'
 /** The journey overview's arcs. Its labels are HTML pins, not layers. */
 const JOURNEY_SOURCE_ID = 'trip-journey-arrows'
+/** Transparent band over each arc — the only part of the overview a pointer can hit. */
+const JOURNEY_HIT_LAYER_ID = 'trip-journey-arrows-hit'
 const SATELLITE_LAYER_ID = 'trip-satellite-raster'
 /** Everything TREK draws is prefixed; the imagery is inserted before the first of them. */
 const OWN_LAYER_PREFIXES = ['trip-', 'trek-']
@@ -559,6 +561,43 @@ function createPluginMarkerElement(tone: PluginMapMarker['tone']): HTMLDivElemen
   return el
 }
 
+/**
+ * What hovering a journey leg says: how you travelled, between where and where,
+ * on what date.
+ *
+ * Built through the DOM rather than as an HTML string because city names come
+ * from imported place data — `textContent` is the rule for that here, and it is
+ * cheaper than being careful. The mode row is omitted when no booking records
+ * one: most legs have none, and a guessed "Car" would invent the one fact this
+ * readout exists to report.
+ */
+function buildJourneyLegTip(leg: JourneyArrowLeg): HTMLDivElement {
+  const box = document.createElement('div')
+  box.style.cssText = 'min-width:120px;font-family:var(--font-system);'
+  if (leg.modeLabel) {
+    const mode = document.createElement('div')
+    mode.className = 'trek-journey-tip'
+    // Our own glyph, serialized from the planner's icon table — no user content
+    // reaches this, and the label beside it is set with textContent below.
+    mode.innerHTML = leg.modeIcon
+    const name = document.createElement('span')
+    name.textContent = leg.modeLabel
+    mode.appendChild(name)
+    box.appendChild(mode)
+  }
+  const route = document.createElement('div')
+  route.style.cssText = 'font-weight:600;font-size:12px;'
+  route.textContent = `${leg.from.label} → ${leg.to.label}`
+  box.appendChild(route)
+  if (leg.dateLabel) {
+    const date = document.createElement('div')
+    date.style.cssText = 'font-size:11px;color:var(--text-muted);'
+    date.textContent = leg.dateLabel
+    box.appendChild(date)
+  }
+  return box
+}
+
 // Popup body for a plugin marker, built with textContent — the values are already
 // host-sanitized, but nothing plugin-supplied is ever handed to innerHTML anyway.
 function buildPluginMarkerPopup(mk: PluginMapMarker): HTMLDivElement {
@@ -724,7 +763,12 @@ export function MapViewGL({
   const journeyPinsRef = useRef<PlacePin[]>([])
   // `wrapCopies: false` — GL repeats features across world copies itself, so the
   // duplicate arc Leaflet needs would only double this one's opacity.
-  const journey = useJourneyArrows({ accommodations, wrapCopies: false })
+  const journey = useJourneyArrows({ accommodations, reservations, wrapCopies: false })
+  // The hover handlers are bound once with the hit layer and would otherwise
+  // close over the legs of whichever render created them. Reading through a ref
+  // keeps one binding correct for the life of the style.
+  const journeyLegsRef = useRef<JourneyArrowLeg[]>(journey.legs)
+  journeyLegsRef.current = journey.legs
   /** Undoes the drag wiring on each POI pin; the pins themselves are rebuilt wholesale. */
   const poiCleanupRef = useRef<(() => void)[]>([])
   const onPoiDropRef = useRef(onPoiDropOnRoute)
@@ -1960,6 +2004,29 @@ export function MapViewGL({
         },
         layout: { 'line-cap': 'round', 'line-join': 'round' },
       })
+      // The hover target. A 3px dashed line is not something a pointer can
+      // find, so a transparent band rides over it — the same device
+      // `trip-route-hit` uses to make the day route clickable. Its handlers are
+      // attached once with the layer, and read the current legs through a ref so
+      // they never need rebinding when the trip changes.
+      map.addLayer({
+        id: JOURNEY_HIT_LAYER_ID,
+        type: 'line',
+        source: JOURNEY_SOURCE_ID,
+        paint: { 'line-color': JOURNEY_ARROW_COLOR, 'line-opacity': 0, 'line-width': 18 },
+        layout: { 'line-cap': 'round' },
+      })
+      map.on('mousemove', JOURNEY_HIT_LAYER_ID, (e: { lngLat: { lng: number; lat: number }; features?: { properties?: Record<string, unknown> }[] }) => {
+        const key = e.features?.[0]?.properties?.key
+        const leg = journeyLegsRef.current.find(l => l.key === key)
+        if (!leg) return
+        map.getCanvas().style.cursor = 'pointer'
+        popupRef.current?.setLngLat(e.lngLat).setDOMContent(buildJourneyLegTip(leg)).addTo(map)
+      })
+      map.on('mouseleave', JOURNEY_HIT_LAYER_ID, () => {
+        map.getCanvas().style.cursor = ''
+        popupRef.current?.remove()
+      })
     }
 
     const src = map.getSource(JOURNEY_SOURCE_ID) as mapboxgl.GeoJSONSource | undefined
@@ -1967,20 +2034,26 @@ export function MapViewGL({
       type: 'FeatureCollection',
       features: journey.legs.flatMap(leg => leg.arcs.map(arc => ({
         type: 'Feature' as const,
-        properties: {},
+        // The leg's key travels on the feature so the hover handler can find it
+        // again; the arcs of one leg all carry the same key.
+        properties: { key: leg.key },
         geometry: { type: 'LineString' as const, coordinates: arc.map(([lat, lng]) => [lng, lat]) },
       }))),
     })
 
     const addPill = (html: string, lng: number, lat: number) => {
       const el = document.createElement('div')
-      // Passive, like the Leaflet pane: the overview captions the map, and
-      // nothing under a pill should become unclickable because of it.
+      // The wrapper stays passive so the map under the layer keeps dragging;
+      // the pill inside it re-enables pointer events for itself (see
+      // .trek-journey-pill), which is what lets it open on hover without the
+      // whole marker box blocking the map.
       el.style.cssText = 'pointer-events:none;transition:none !important;animation:none !important;will-change:transform;backface-visibility:hidden'
       el.innerHTML = html
       journeyPinsRef.current.push(attachPin(map, gl, pinLayerRef.current, el, lng, lat))
     }
-    for (const leg of journey.legs) addPill(legPillHtml(leg.dateLabel, leg.head.bearing), leg.head.point[1], leg.head.point[0])
+    for (const leg of journey.legs) {
+      addPill(legPillHtml(leg.dateLabel, leg.head.bearing, leg.modeLabel, leg.modeIcon), leg.head.point[1], leg.head.point[0])
+    }
     for (const stop of journey.stops) addPill(stopPillHtml(stop.label, stop.dateLabel), stop.lng, stop.lat)
 
     return () => {

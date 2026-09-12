@@ -95,6 +95,122 @@ body { height: 100%; overflow: auto; overscroll-behavior: none; -webkit-overflow
   color: var(--text-primary) !important;
 }
 
+/* Journey overview — the trip's city centres and the dated arrows between them.
+   One stylesheet for all three renderers: Leaflet hangs this markup off a
+   divIcon and the GL engines off a Marker element, but the pill is the same
+   HTML in both, so its behaviour has to live somewhere neither owns.
+
+   Collapsed by default and opened by hover. A long trip puts fifteen of these
+   on screen at once, and at that density open pills overlap into an unreadable
+   wall — a dot is legible at any zoom, and the name is one pointer away. */
+.trek-journey-anchor {
+  /* Zero-sized, so whichever renderer centres the marker centres NOTHING and the
+     dot stays welded to its coordinate while the body grows to the right. */
+  position: relative;
+  display: block;
+  width: 0;
+  height: 0;
+}
+.trek-journey-pill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  box-shadow: none;
+  pointer-events: auto;
+  cursor: default;
+  /* The overlay's pane is passive so the map underneath stays draggable; the
+     pills opt back in, which is what makes hover possible at all. */
+  transform: translate(-11px, -50%);
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+.trek-journey-pill .trek-journey-body {
+  display: none;
+  flex-direction: column;
+  align-items: flex-start;
+  white-space: nowrap;
+}
+.trek-journey-pill:hover {
+  background: var(--bg-card);
+  border-color: var(--border-primary);
+  box-shadow: 0 3px 12px rgb(0 0 0 / 22%);
+  padding: 5px 11px 5px 8px;
+  /* Raised above its neighbours so an opened pill is never covered by the next
+     dot along — at fifteen stops they are frequently within a few pixels. */
+  z-index: 5;
+}
+.trek-journey-pill:hover .trek-journey-body { display: flex; }
+.trek-journey-dot {
+  display: block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 2px solid;
+  box-sizing: content-box;
+  flex-shrink: 0;
+}
+.trek-journey-head {
+  display: block;
+  width: 0;
+  height: 0;
+  flex-shrink: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 9px solid;
+}
+.trek-journey-name {
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--text-primary);
+}
+.trek-journey-dates,
+.trek-journey-mode {
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.25;
+  color: var(--text-muted);
+}
+.trek-journey-date {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.trek-journey-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.trek-journey-mode svg {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+}
+
+/* The line's own hover readout — which booking carried you along this leg.
+   Leaflet supplies the tooltip chrome; only the mode row is ours. */
+.trek-journey-tip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-system);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.trek-journey-tip svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
 /* GL hover popup — the name/category/address card on marker hover.
    Matches the Leaflet map's white hover tooltip. pointer-events:none so moving
    onto the popup never steals the marker's mouseleave and causes flicker. */
