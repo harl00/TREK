@@ -47,9 +47,26 @@ function trip(rows: { dayNumber: number; date: string | null; specs: StopSpec[] 
 const at = (point: [number, number], address?: string, name?: string): StopSpec => ({ at: point, address, name })
 
 describe('cityCandidates', () => {
-  it('drops the venue, the country and anything carrying a digit', () => {
+  // The shape most providers actually return, and the one that broke this:
+  // the city travels glued to its postcode, so a "drop anything with a digit"
+  // filter throws away the answer and leaves the country to win on frequency.
+  it('keeps the city that arrives glued to a postcode', () => {
+    expect(cityCandidates('5 Avenue Anatole France, 75007 Paris, France'))
+      .toEqual(['Avenue Anatole France', 'Paris'])
+  })
+
+  it('strips a trailing postcode too', () => {
+    expect(cityCandidates('Karlsplatz 1, Wien 1010, Austria')).toEqual(['Karlsplatz', 'Wien'])
+  })
+
+  it('keeps a leading city — the first part is not reliably a venue', () => {
+    expect(cityCandidates('Paris, Ile-de-France, France')).toEqual(['Paris', 'Ile-de-France'])
+    expect(cityCandidates('Amsterdam, North Holland, Netherlands')).toEqual(['Amsterdam', 'North Holland'])
+  })
+
+  it('keeps the long Nominatim form intact apart from the country', () => {
     expect(cityCandidates('Eiffel Tower, 5, Avenue Anatole France, Paris, Île-de-France, 75007, France'))
-      .toEqual(['Avenue Anatole France', 'Paris', 'Île-de-France'])
+      .toEqual(['Eiffel Tower', 'Avenue Anatole France', 'Paris', 'Île-de-France'])
   })
 
   it('keeps the city of a short address, dropping only the country', () => {
@@ -58,10 +75,6 @@ describe('cityCandidates', () => {
 
   it('keeps a lone part as-is — there is nothing to strip it down to', () => {
     expect(cityCandidates('Paris')).toEqual(['Paris'])
-  })
-
-  it('drops a venue only once there is something behind it', () => {
-    expect(cityCandidates('Hotel Meurice, Paris, France')).toEqual(['Paris'])
   })
 
   it('answers nothing for an address that is all numbers', () => {
@@ -77,7 +90,7 @@ describe('buildJourneyStops', () => {
   it('ignores days that pin nothing to the map', () => {
     const { days, assignments } = trip([
       { dayNumber: 1, date: '2026-04-12', specs: [] },
-      { dayNumber: 2, date: '2026-04-13', specs: [at(PARIS, 'Louvre, Paris, France')] },
+      { dayNumber: 2, date: '2026-04-13', specs: [at(PARIS, 'Paris, Ile-de-France, France')] },
     ])
     const [stop, ...rest] = buildJourneyStops({ days, assignments })
     expect(rest).toEqual([])
@@ -88,9 +101,9 @@ describe('buildJourneyStops', () => {
 
   it('reads a week in one city as one stop', () => {
     const { days, assignments } = trip([
-      { dayNumber: 1, date: '2026-04-12', specs: [at(PARIS, 'Louvre, Paris, France')] },
-      { dayNumber: 2, date: '2026-04-13', specs: [at(VERSAILLES, 'Château, Versailles, France')] },
-      { dayNumber: 3, date: '2026-04-14', specs: [at(PARIS, 'Musée d’Orsay, Paris, France')] },
+      { dayNumber: 1, date: '2026-04-12', specs: [at(PARIS, 'Paris, Ile-de-France, France')] },
+      { dayNumber: 2, date: '2026-04-13', specs: [at(VERSAILLES, 'Versailles, Ile-de-France, France')] },
+      { dayNumber: 3, date: '2026-04-14', specs: [at(PARIS, 'Paris, Ile-de-France, France')] },
     ])
     const result = buildJourneyStops({ days, assignments })
     expect(result).toHaveLength(1)
@@ -101,10 +114,10 @@ describe('buildJourneyStops', () => {
 
   it('splits when the trip moves city, and dates each stay', () => {
     const { days, assignments } = trip([
-      { dayNumber: 1, date: '2026-04-12', specs: [at(PARIS, 'Louvre, Paris, France')] },
-      { dayNumber: 2, date: '2026-04-13', specs: [at(PARIS, 'Orsay, Paris, France')] },
-      { dayNumber: 3, date: '2026-04-14', specs: [at(LYON, 'Fourvière, Lyon, France')] },
-      { dayNumber: 4, date: '2026-04-15', specs: [at(LYON, 'Les Halles, Lyon, France')] },
+      { dayNumber: 1, date: '2026-04-12', specs: [at(PARIS, 'Paris, Ile-de-France, France')] },
+      { dayNumber: 2, date: '2026-04-13', specs: [at(PARIS, 'Paris, Ile-de-France, France')] },
+      { dayNumber: 3, date: '2026-04-14', specs: [at(LYON, 'Lyon, Auvergne-Rhône-Alpes, France')] },
+      { dayNumber: 4, date: '2026-04-15', specs: [at(LYON, 'Lyon, Auvergne-Rhône-Alpes, France')] },
     ])
     const result = buildJourneyStops({ days, assignments })
     expect(result.map(s => s.label)).toEqual(['Paris', 'Lyon'])
@@ -114,9 +127,9 @@ describe('buildJourneyStops', () => {
 
   it('does not read a single day out past the radius as a move', () => {
     const { days, assignments } = trip([
-      { dayNumber: 1, date: '2026-04-12', specs: [at(PARIS, 'Louvre, Paris, France')] },
-      { dayNumber: 2, date: '2026-04-13', specs: [at(REIMS, 'Cathédrale, Reims, France')] },
-      { dayNumber: 3, date: '2026-04-14', specs: [at(PARIS, 'Orsay, Paris, France')] },
+      { dayNumber: 1, date: '2026-04-12', specs: [at(PARIS, 'Paris, Ile-de-France, France')] },
+      { dayNumber: 2, date: '2026-04-13', specs: [at(REIMS, 'Reims, Grand Est, France')] },
+      { dayNumber: 3, date: '2026-04-14', specs: [at(PARIS, 'Paris, Ile-de-France, France')] },
     ])
     // Paris → Reims → Paris is a day trip, not two moves.
     expect(buildJourneyStops({ days, assignments })).toHaveLength(1)
@@ -124,10 +137,10 @@ describe('buildJourneyStops', () => {
 
   it('keeps a stop that is passed through for more than a day', () => {
     const { days, assignments } = trip([
-      { dayNumber: 1, date: '2026-04-12', specs: [at(PARIS, 'Louvre, Paris, France')] },
-      { dayNumber: 2, date: '2026-04-13', specs: [at(REIMS, 'Cathédrale, Reims, France')] },
-      { dayNumber: 3, date: '2026-04-14', specs: [at(REIMS, 'Place Drouet, Reims, France')] },
-      { dayNumber: 4, date: '2026-04-15', specs: [at(PARIS, 'Orsay, Paris, France')] },
+      { dayNumber: 1, date: '2026-04-12', specs: [at(PARIS, 'Paris, Ile-de-France, France')] },
+      { dayNumber: 2, date: '2026-04-13', specs: [at(REIMS, 'Reims, Grand Est, France')] },
+      { dayNumber: 3, date: '2026-04-14', specs: [at(REIMS, 'Reims, Grand Est, France')] },
+      { dayNumber: 4, date: '2026-04-15', specs: [at(PARIS, 'Paris, Ile-de-France, France')] },
     ])
     expect(buildJourneyStops({ days, assignments }).map(s => s.label)).toEqual(['Paris', 'Reims', 'Paris'])
   })
@@ -150,7 +163,7 @@ describe('buildJourneyStops', () => {
 
   it('centres a stay on its hotel rather than on that day’s activities', () => {
     const { days, assignments } = trip([
-      { dayNumber: 1, date: '2026-04-12', specs: [at(VERSAILLES, 'Château, Versailles, France')] },
+      { dayNumber: 1, date: '2026-04-12', specs: [at(VERSAILLES, 'Versailles, Ile-de-France, France')] },
     ])
     const hotel = {
       id: 1, trip_id: 1, place_id: 9, start_day_id: days[0].id, end_day_id: days[0].id,
@@ -158,16 +171,35 @@ describe('buildJourneyStops', () => {
       place_lat: PARIS[0], place_lng: PARIS[1],
     } as Accommodation
     const [stop] = buildJourneyStops({ days, assignments, accommodations: [hotel] })
+    // The stay sits on the hotel, 17 km from the day's only activity.
     expect(stop.lat).toBeCloseTo(PARIS[0], 4)
     expect(stop.lng).toBeCloseTo(PARIS[1], 4)
-    // And the hotel's address leads, so the stay is named for where you sleep.
-    expect(stop.label).toBe('Paris')
   })
 
-  it('names a stay by what is unique to it, not by the country every stay shares', () => {
+  it('never names a stay after a region another stay is also in', () => {
+    // The region beats the city on frequency inside the first stay — one of its
+    // two pins carries no city at all — so only the fact that the SECOND stay is
+    // in the same region can rule it out. Nice and Aix are 150 km apart, which
+    // is two stays and one Provence.
+    const NICE: [number, number] = [43.7009, 7.2683]
+    const AIX: [number, number] = [43.5297, 5.4474]
     const { days, assignments } = trip([
-      { dayNumber: 1, date: '2026-04-12', specs: [at(PARIS, 'Louvre, Paris, Île-de-France, France')] },
-      { dayNumber: 2, date: '2026-04-13', specs: [at(MARSEILLE, 'Vieux-Port, Marseille, Provence, France')] },
+      { dayNumber: 1, date: '2026-04-12', specs: [
+        at(NICE, 'Nice, Provence-Alpes-Côte d’Azur, France'),
+        at(NICE, 'Provence-Alpes-Côte d’Azur, France'),
+      ] },
+      { dayNumber: 2, date: '2026-04-13', specs: [
+        at(AIX, 'Aix-en-Provence, Provence-Alpes-Côte d’Azur, France'),
+      ] },
+    ])
+    expect(buildJourneyStops({ days, assignments }).map(s => s.label))
+      .toEqual(['Nice', 'Aix-en-Provence'])
+  })
+
+  it('never names a stay after the country every stay shares', () => {
+    const { days, assignments } = trip([
+      { dayNumber: 1, date: '2026-04-12', specs: [at(PARIS, 'Paris, France')] },
+      { dayNumber: 2, date: '2026-04-13', specs: [at(MARSEILLE, 'Marseille, France')] },
     ])
     expect(buildJourneyStops({ days, assignments }).map(s => s.label)).toEqual(['Paris', 'Marseille'])
   })
@@ -184,6 +216,40 @@ describe('buildJourneyStops', () => {
     expect(buildJourneyStops({ days, assignments })[0].label).toBe('Paris')
   })
 
+  // Built from a real 53-day Europe itinerary, which is where the labelling
+  // first went wrong: every stop came out named for its region or its country
+  // ("France" for Paris, "Auvergne-Rhône-Alpes" for Lyon) because the synthetic
+  // fixtures above all used the long Nominatim form and real pins do not.
+  it('names a city-marker stop after the city, not its region', () => {
+    const { days, assignments } = trip([
+      { dayNumber: 1, date: '2027-06-24', specs: [at(LYON, 'Lyon, Auvergne-Rhône-Alpes, France', 'Lyon')] },
+      { dayNumber: 2, date: '2027-07-07', specs: [at([45.068, 7.682], 'Turin, Piedmont, Italy', 'Turin')] },
+    ])
+    expect(buildJourneyStops({ days, assignments }).map(s => s.label)).toEqual(['Lyon', 'Turin'])
+  })
+
+  it('names a busy city stay after the city every street in it shares', () => {
+    const { days, assignments } = trip([
+      { dayNumber: 1, date: '2027-06-18', specs: [
+        at(PARIS, 'Paris, Ile-de-France, France', 'Paris'),
+        at([48.858, 2.295], '5 Avenue Anatole France, 75007 Paris, France', 'Eiffel Tower'),
+        at([48.860, 2.294], 'Port de la Bourdonnais, 75007 Paris, France', 'Bateaux Parisiens'),
+      ] },
+      { dayNumber: 2, date: '2027-06-19', specs: [
+        at([48.861, 2.338], 'Rue Saint-Honoré, 75001 Paris, France', 'Louvre Museum'),
+      ] },
+      // The day out to Versailles is inside the radius, so it joins Paris and
+      // must not rename it.
+      { dayNumber: 3, date: '2027-06-22', specs: [
+        at([48.804, 2.120], "Place d'Armes, 78000 Versailles, France", 'Palace of Versailles'),
+      ] },
+      { dayNumber: 4, date: '2027-06-24', specs: [at(LYON, 'Lyon, Auvergne-Rhône-Alpes, France', 'Lyon')] },
+    ])
+    const result = buildJourneyStops({ days, assignments })
+    expect(result.map(s => s.label)).toEqual(['Paris', 'Lyon'])
+    expect(result[0].dayIds).toHaveLength(3)
+  })
+
   it('falls back to the stop nearest the centre when no address says anything', () => {
     const { days, assignments } = trip([
       { dayNumber: 1, date: '2026-04-12', specs: [at(PARIS, undefined, 'Notre-Dame')] },
@@ -194,9 +260,9 @@ describe('buildJourneyStops', () => {
 
   it('numbers the days of a trip that carries no dates', () => {
     const { days, assignments } = trip([
-      { dayNumber: 1, date: null, specs: [at(PARIS, 'Louvre, Paris, France')] },
-      { dayNumber: 2, date: null, specs: [at(PARIS, 'Orsay, Paris, France')] },
-      { dayNumber: 3, date: null, specs: [at(LYON, 'Fourvière, Lyon, France')] },
+      { dayNumber: 1, date: null, specs: [at(PARIS, 'Paris, Ile-de-France, France')] },
+      { dayNumber: 2, date: null, specs: [at(PARIS, 'Paris, Ile-de-France, France')] },
+      { dayNumber: 3, date: null, specs: [at(LYON, 'Lyon, Auvergne-Rhône-Alpes, France')] },
     ])
     const result = buildJourneyStops({ days, assignments })
     expect(result.map(s => [s.startDate, s.startDayNumber, s.endDayNumber]))
@@ -205,8 +271,8 @@ describe('buildJourneyStops', () => {
 
   it('reads the itinerary in day order, not in whatever order the array arrived', () => {
     const { days, assignments } = trip([
-      { dayNumber: 1, date: '2026-04-12', specs: [at(PARIS, 'Louvre, Paris, France')] },
-      { dayNumber: 2, date: '2026-04-13', specs: [at(LYON, 'Fourvière, Lyon, France')] },
+      { dayNumber: 1, date: '2026-04-12', specs: [at(PARIS, 'Paris, Ile-de-France, France')] },
+      { dayNumber: 2, date: '2026-04-13', specs: [at(LYON, 'Lyon, Auvergne-Rhône-Alpes, France')] },
     ])
     const shuffled = [days[1], days[0]]
     expect(buildJourneyStops({ days: shuffled, assignments }).map(s => s.label)).toEqual(['Paris', 'Lyon'])
@@ -215,14 +281,14 @@ describe('buildJourneyStops', () => {
 
 describe('buildJourneyLegs', () => {
   const threeCities = () => trip([
-    { dayNumber: 1, date: '2026-04-12', specs: [at(PARIS, 'Louvre, Paris, France')] },
-    { dayNumber: 2, date: '2026-04-13', specs: [at(LYON, 'Fourvière, Lyon, France')] },
-    { dayNumber: 3, date: '2026-04-14', specs: [at(MARSEILLE, 'Vieux-Port, Marseille, France')] },
+    { dayNumber: 1, date: '2026-04-12', specs: [at(PARIS, 'Paris, Ile-de-France, France')] },
+    { dayNumber: 2, date: '2026-04-13', specs: [at(LYON, 'Lyon, Auvergne-Rhône-Alpes, France')] },
+    { dayNumber: 3, date: '2026-04-14', specs: [at(MARSEILLE, 'Marseille, Provence, France')] },
   ])
 
   it('draws no arrow for a trip that never leaves one city', () => {
     const { days, assignments } = trip([
-      { dayNumber: 1, date: '2026-04-12', specs: [at(PARIS, 'Louvre, Paris, France')] },
+      { dayNumber: 1, date: '2026-04-12', specs: [at(PARIS, 'Paris, Ile-de-France, France')] },
     ])
     expect(buildJourneyLegs({ days, assignments })).toEqual([])
   })

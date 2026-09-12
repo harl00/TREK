@@ -73,8 +73,8 @@ function seedTrip() {
     { id: 2, trip_id: 1, day_number: 2, date: '2026-04-14' },
   ] as Day[]
   const assignments: AssignmentsMap = {
-    '1': [{ id: 1, day_id: 1, place_id: 1, order_index: 0, place: { id: 1, name: 'Louvre', lat: PARIS[0], lng: PARIS[1], address: 'Louvre, Paris, France' } }],
-    '2': [{ id: 2, day_id: 2, place_id: 2, order_index: 0, place: { id: 2, name: 'Fourvière', lat: LYON[0], lng: LYON[1], address: 'Fourvière, Lyon, France' } }],
+    '1': [{ id: 1, day_id: 1, place_id: 1, order_index: 0, place: { id: 1, name: 'Louvre', lat: PARIS[0], lng: PARIS[1], address: 'Paris, Ile-de-France, France' } }],
+    '2': [{ id: 2, day_id: 2, place_id: 2, order_index: 0, place: { id: 2, name: 'Fourvière', lat: LYON[0], lng: LYON[1], address: 'Lyon, Auvergne-Rhône-Alpes, France' } }],
   } as unknown as AssignmentsMap
   seedStore(useTripStore, { days, assignments })
 }
@@ -158,7 +158,7 @@ describe('JourneyArrowOverlay', () => {
     seedStore(useTripStore, {
       days: [{ id: 1, trip_id: 1, day_number: 1, date: '2026-04-12' }] as Day[],
       assignments: {
-        '1': [{ id: 1, day_id: 1, place_id: 1, order_index: 0, place: { id: 1, name: 'Louvre', lat: PARIS[0], lng: PARIS[1], address: 'Louvre, Paris, France' } }],
+        '1': [{ id: 1, day_id: 1, place_id: 1, order_index: 0, place: { id: 1, name: 'Louvre', lat: PARIS[0], lng: PARIS[1], address: 'Paris, Ile-de-France, France' } }],
       } as unknown as AssignmentsMap,
     })
     enable(true)

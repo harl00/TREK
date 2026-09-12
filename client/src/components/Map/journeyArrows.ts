@@ -213,22 +213,46 @@ function mergeNearNeighbours(clusters: Cluster[]): Cluster[] {
   return out
 }
 
-/** A postcode, a house number, a `7th Arrondissement` — never the name of a city. */
-const hasDigit = (s: string) => /\d/.test(s)
+/** Nothing but digits and the punctuation that joins them — a bare house number. */
+const isAllDigits = (s: string) => /^[\d\s\-/]+$/.test(s)
 
 /**
- * The parts of one address that could plausibly be a city.
+ * Strip the numeric furniture from one address part without discarding the part.
  *
- * Nominatim's display_name runs venue → street → suburb → city → county →
- * state → country, so the city is always in the middle: the first part names
- * the place itself and the last names the country, and neither is ever the
- * answer. Anything carrying a digit goes too.
+ * The naive rule — drop any part containing a digit — is what the real world
+ * punishes: `75007 Paris` and `1010 Wien` are how most providers write the line
+ * that names the city, so dropping them throws away the answer and leaves the
+ * country to win on frequency. House numbers lead and postcodes sit on either
+ * side of the name, so removing the number is enough and keeps `Paris`.
+ */
+function stripNumbers(part: string): string {
+  return part
+    .replace(/^[\d][\d\-/]*\s+/, '')
+    .replace(/\s+[\d][\d\-\s]*$/, '')
+    .trim()
+}
+
+/**
+ * The parts of one address that could plausibly name a city.
+ *
+ * Only one part is certainly not the city: the country, which is always last.
+ * The first part is NOT reliably a venue to be discarded — `Paris,
+ * Île-de-France, France` leads with the city itself, and a pin named for the
+ * city it marks is the commonest thing on a long trip's map. Dropping it cost
+ * three of fifteen stops their name on real data, in exchange for tidying a
+ * case (a stay whose single address is a hotel) that the ranking already
+ * handles badly enough to be no worse.
+ *
+ * So everything but the country is left in and the ranking settles it: a street
+ * appears on one place's address, the city on all of them, and where a stay has
+ * only one address the earliest part wins — which is the city.
  */
 export function cityCandidates(address: string): string[] {
-  const parts = address.split(',').map(p => p.trim()).filter(p => p && !hasDigit(p))
-  if (parts.length <= 1) return parts
-  const withoutCountry = parts.slice(0, -1)
-  return withoutCountry.length >= 2 ? withoutCountry.slice(1) : withoutCountry
+  const parts = address
+    .split(',')
+    .map(p => stripNumbers(p.trim()))
+    .filter(p => p && !isAllDigits(p))
+  return parts.length >= 2 ? parts.slice(0, -1) : parts
 }
 
 interface Candidate { count: number; indexSum: number }
