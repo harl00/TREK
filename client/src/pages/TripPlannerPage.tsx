@@ -413,6 +413,8 @@ function TripPlannerPageDesktop(): React.ReactElement | null {
               // The route toggle belongs to one day, so the map needs that day to
               // know which automated transports may ride it (#2019).
               days={days}
+              // The stays anchor the journey overview's city centres.
+              accommodations={tripAccommodations}
               selectedDayId={selectedDayId}
               routeSegments={roadtripActive ? roadtripRoutes.segments : routeSegments}
               selectedPlaceId={selectedPlaceId}

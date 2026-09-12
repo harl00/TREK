@@ -138,6 +138,12 @@ export interface Settings {
   /** Leaflet base layer: default street tiles or a satellite/aerial view. */
   map_base_layer?: 'default' | 'satellite'
   /**
+   * Draw the journey overview: the trip's city centres joined by dated
+   * directional arrows, over whatever else the map is showing. Off by default —
+   * it is a second reading of the plan, not a correction to the first.
+   */
+  map_journey_arrows?: boolean
+  /**
    * The three road-trip driving limits (#1797). All three are personal rather than
    * instance configuration — how long you are willing to drive and how far your car goes
    * are properties of the traveller, so they are plain per-user settings and stay out of

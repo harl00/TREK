@@ -50,6 +50,8 @@ export default function MMapArea({ planner, shell }: MMapAreaProps) {
         // The route toggle belongs to one day, so the map needs that day to know
         // which automated transports may ride it (#2019).
         days={planner.days}
+        // The stays anchor the journey overview's city centres.
+        accommodations={planner.tripAccommodations}
         selectedDayId={planner.selectedDayId}
         routeSegments={planner.routeSegments}
         selectedPlaceId={planner.selectedPlaceId}

@@ -88,6 +88,7 @@ export const DEFAULT_SETTINGS: Settings = {
   optimize_from_accommodation: true,
   map_provider: 'leaflet',
   map_base_layer: 'default',
+  map_journey_arrows: false,
   map_poi_pill_enabled: true,
   carto_api_key: '',
   mapbox_access_token: '',

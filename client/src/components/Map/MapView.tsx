@@ -37,13 +37,15 @@ import 'leaflet.markercluster/dist/MarkerCluster.Default.css'
 import { mapsApi } from '../../api/client'
 import { getCategoryIcon, CATEGORY_ICON_MAP } from '../shared/categoryIcons'
 import ReservationOverlay from './ReservationOverlay'
+import JourneyArrowOverlay from './JourneyArrowOverlay'
+import { JourneyArrowsToggle } from './JourneyArrowsToggle'
 import { PluginMapMarkers } from './MapPluginMarkers'
 import { PluginMapLayers } from './MapPluginLayers'
 import { useTransportRoutes } from '../../hooks/useTransportRoutes'
 import { visibleRouteReservations } from '../../utils/reservationRoutes'
 import { safeHexColor } from '../../utils/safeColor'
 import { escapeHtml } from '@trek/shared'
-import type { Day, Reservation, RouteVia } from '../../types'
+import type { Accommodation, Day, Reservation, RouteVia } from '../../types'
 import { POI_CATEGORY_BY_KEY, type Poi } from './poiCategories'
 import { resolveTrackColor, hasManualTrackColor } from './trackColors'
 import { OFM_POSITRON, DEFAULT_MAP_CENTER, DEFAULT_MAP_ZOOM, MAP_MAX_ZOOM, SATELLITE_TILE_URL, SATELLITE_TILE_ATTRIBUTION, SATELLITE_TILE_MAXZOOM, attributionForTile } from '../../constants/mapDefaults'
@@ -71,6 +73,9 @@ L.Icon.Default.mergeOptions({
 })
 
 const iconCache = new Map<string, L.DivIcon>()
+
+/** Shared empty default — see the `accommodations` prop below. */
+const NO_ACCOMMODATIONS: Accommodation[] = []
 
 // Tone dot for a plugin route's via points (charging stops, rest areas) — smaller
 // than the plugin markers so the day route's own stops stay visually dominant.
@@ -650,6 +655,11 @@ export const MapView = memo(function MapView({
   activeAlternative,
   onChooseAlternative,
   onHighlightAlternative,
+  // The trip's stays, for the journey overview: a hotel is where a day is based,
+  // so it anchors a city centre better than that day's activities can. The
+  // default is a shared constant, not a fresh `[]` — the overview memoizes on
+  // this, and a new array each render would rederive the whole trip each time.
+  accommodations = NO_ACCOMMODATIONS,
 }: any) {
   // The caller hands over whatever the user configured; what kind of basemap
   // that is decides which layer draws it. A saved raster template still wins,
@@ -1146,6 +1156,7 @@ export const MapView = memo(function MapView({
       ))}
       <PluginMapMarkers tripId={tripId} />
       <PluginMapLayers tripId={tripId} />
+      <JourneyArrowOverlay accommodations={accommodations} />
     </MapContainer>
     {isMobile && <LocationButton
       mode={trackingMode}
@@ -1157,8 +1168,9 @@ export const MapView = memo(function MapView({
     {/* 20px off the sidebar, not 12: the pill is round and frosted, so at the
         smaller gap its shadow ran into the sidebar edge and the two read as one
         surface. */}
-    <div style={{ position: 'absolute', left: leftWidth + 20, bottom: switcherBottom, zIndex: 1000, pointerEvents: 'none' }}>
+    <div style={{ position: 'absolute', left: leftWidth + 20, bottom: switcherBottom, zIndex: 1000, pointerEvents: 'none', display: 'flex', gap: 8 }}>
       <MapLayerSwitcher active={baseLayer} onToggle={toggleBaseLayer} />
+      <JourneyArrowsToggle />
     </div>
     </div>
 

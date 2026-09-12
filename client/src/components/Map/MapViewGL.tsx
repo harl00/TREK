@@ -9,6 +9,9 @@ import { renderIconMarkup } from '../../utils/iconMarkup'
 import type mapboxgl from 'mapbox-gl'
 import { useSettingsStore } from '../../store/settingsStore'
 import { MapLayerSwitcher, type BaseLayer } from './MapLayerSwitcher'
+import { JourneyArrowsToggle } from './JourneyArrowsToggle'
+import { useJourneyArrows } from './useJourneyArrows'
+import { JOURNEY_ARROW_CASING, JOURNEY_ARROW_COLOR, legPillHtml, stopPillHtml } from './journeyArrowMarkup'
 import { useAuthStore } from '../../store/authStore'
 import { getCached, isLoading, fetchPhoto, onThumbReady, getAllThumbs } from '../../services/photoService'
 import { isCustomPlaceImage, photoCacheKey } from './placePhoto'
@@ -23,7 +26,7 @@ import { escapeHtml } from '@trek/shared'
 import { MAPBOX_DEFAULT_STYLE, styleForActiveProvider, basemapLanguage, type GlMapProvider } from './glProviders'
 import LocationButton from './LocationButton'
 import { useGeolocation } from '../../hooks/useGeolocation'
-import type { Day, Place, Reservation, RouteVia } from '../../types'
+import type { Accommodation, Day, Place, Reservation, RouteVia } from '../../types'
 import { POI_CATEGORY_BY_KEY, type Poi } from './poiCategories'
 import { resolveTrackColor, hasManualTrackColor } from './trackColors'
 import { buildPoiPopupHtml } from './placePopup'
@@ -61,6 +64,8 @@ const GPX_HIT_LAYER_ID = 'trip-gpx-hit'
  * Same tokenless ESRI source as Leaflet, so the two look alike and neither needs a key.
  */
 const SATELLITE_SOURCE_ID = 'trip-satellite'
+/** The journey overview's arcs. Its labels are HTML pins, not layers. */
+const JOURNEY_SOURCE_ID = 'trip-journey-arrows'
 const SATELLITE_LAYER_ID = 'trip-satellite-raster'
 /** Everything TREK draws is prefixed; the imagery is inserted before the first of them. */
 const OWN_LAYER_PREFIXES = ['trip-', 'trek-']
@@ -146,6 +151,11 @@ interface Props {
   visibleConnectionIds?: number[]
   showTransitRoutes?: boolean
   days?: Day[]
+  /**
+   * The trip's stays, for the journey overview: a hotel is where a day is based,
+   * so it anchors a city centre better than that day's activities can.
+   */
+  accommodations?: Accommodation[]
   selectedDayId?: number | null
   showReservationStats?: boolean
   onReservationClick?: (reservationId: number) => void
@@ -650,6 +660,7 @@ export function MapViewGL({
   glProvider = 'mapbox-gl',
   gl,
   onMapReady,
+  accommodations,
 }: Props) {
   const rawMapboxStyle = useSettingsStore(s => s.settings.mapbox_style || MAPBOX_DEFAULT_STYLE)
   const rawMaplibreStyle = useSettingsStore(s => s.settings.maplibre_style || '')
@@ -708,6 +719,12 @@ export function MapViewGL({
   const onReservationClickRef = useRef(onReservationClick)
   onReservationClickRef.current = onReservationClick
   const poiMarkersRef = useRef<PlacePin[]>([])
+  // The journey overview's city/date pills. Its arcs live in a geojson source
+  // (JOURNEY_SOURCE_ID) — only the labels are HTML, exactly as on Leaflet.
+  const journeyPinsRef = useRef<PlacePin[]>([])
+  // `wrapCopies: false` — GL repeats features across world copies itself, so the
+  // duplicate arc Leaflet needs would only double this one's opacity.
+  const journey = useJourneyArrows({ accommodations, wrapCopies: false })
   /** Undoes the drag wiring on each POI pin; the pins themselves are rebuilt wholesale. */
   const poiCleanupRef = useRef<(() => void)[]>([])
   const onPoiDropRef = useRef(onPoiDropOnRoute)
@@ -1903,6 +1920,75 @@ export function MapViewGL({
     }
   }, [routeVias, mapReady, glProvider])
 
+  /**
+   * The journey overview — the trip's city centres joined by dated arrows.
+   *
+   * Same two halves as the Leaflet overlay, drawn the way a GL map draws: the
+   * arcs are a geojson source (its own, so a style rebuild takes the layer with
+   * it and this effect puts it straight back), and the pills are the same HTML
+   * the Leaflet divIcons carry, hung on the same pin helper as every other label
+   * here. What to draw is decided in useJourneyArrows, once, for all renderers.
+   */
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapReady) return
+    journeyPinsRef.current.forEach(p => p.remove())
+    journeyPinsRef.current = []
+    // Off and never turned on in this style's lifetime: don't pay for the source
+    // at all. Once it exists the effect keeps running, so turning the layer off
+    // empties it rather than leaving the last arcs drawn.
+    if (!journey.enabled && !map.getSource(JOURNEY_SOURCE_ID)) return
+
+    if (!map.getSource(JOURNEY_SOURCE_ID)) {
+      map.addSource(JOURNEY_SOURCE_ID, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+      map.addLayer({
+        id: 'trip-journey-arrows-casing',
+        type: 'line',
+        source: JOURNEY_SOURCE_ID,
+        paint: { 'line-color': JOURNEY_ARROW_CASING, 'line-width': 7, 'line-opacity': 0.55 },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+      })
+      map.addLayer({
+        id: 'trip-journey-arrows-line',
+        type: 'line',
+        source: JOURNEY_SOURCE_ID,
+        // Dash lengths are in line-widths here, not pixels, so 3/2.3 on a 3px
+        // line is the '9, 7' the Leaflet overlay draws.
+        paint: {
+          'line-color': JOURNEY_ARROW_COLOR, 'line-width': 3, 'line-opacity': 0.95,
+          'line-dasharray': [3, 2.3],
+        },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+      })
+    }
+
+    const src = map.getSource(JOURNEY_SOURCE_ID) as mapboxgl.GeoJSONSource | undefined
+    src?.setData({
+      type: 'FeatureCollection',
+      features: journey.legs.flatMap(leg => leg.arcs.map(arc => ({
+        type: 'Feature' as const,
+        properties: {},
+        geometry: { type: 'LineString' as const, coordinates: arc.map(([lat, lng]) => [lng, lat]) },
+      }))),
+    })
+
+    const addPill = (html: string, lng: number, lat: number) => {
+      const el = document.createElement('div')
+      // Passive, like the Leaflet pane: the overview captions the map, and
+      // nothing under a pill should become unclickable because of it.
+      el.style.cssText = 'pointer-events:none;transition:none !important;animation:none !important;will-change:transform;backface-visibility:hidden'
+      el.innerHTML = html
+      journeyPinsRef.current.push(attachPin(map, gl, pinLayerRef.current, el, lng, lat))
+    }
+    for (const leg of journey.legs) addPill(legPillHtml(leg.dateLabel, leg.head.bearing), leg.head.point[1], leg.head.point[0])
+    for (const stop of journey.stops) addPill(stopPillHtml(stop.label, stop.dateLabel), stop.lng, stop.lat)
+
+    return () => {
+      journeyPinsRef.current.forEach(p => p.remove())
+      journeyPinsRef.current = []
+    }
+  }, [journey, mapReady, glProvider, gl])
+
   // Reconcile plugin markers (imperative, same lifecycle as the POI markers).
   useEffect(() => {
     const map = mapRef.current
@@ -2225,8 +2311,10 @@ export function MapViewGL({
         bottom: isMobile && hasDayDetail
           ? 'calc(var(--bottom-nav-h, 0px) + 20px + var(--day-panel-h, 0px) + 12px)'
           : 'calc(var(--bottom-nav-h, 0px) + 12px)',
+        display: 'flex', gap: 8,
       }}>
         <MapLayerSwitcher active={baseLayer as BaseLayer} onToggle={toggleBaseLayer} />
+        <JourneyArrowsToggle />
       </div>
       {/* Hover tooltip — cursor-following name/category/address card, identical to
           the Leaflet map's overlay (no anchored popup, no photo). */}
