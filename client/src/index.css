@@ -1236,6 +1236,20 @@ body {
 .leaflet-pane {
   z-index: 0 !important;
 }
+/* …except the two panes that carry transient chrome.
+   The blanket rule above flattens every pane, so stacking falls back to DOM
+   order — and a pane created on demand (the journey overview, the booking
+   endpoints) is appended after the built-in ones, which puts it over the
+   tooltip and popup that describe it. Restoring Leaflet's own two values is
+   enough to fix that for good: both stay inside .leaflet-container's stacking
+   context, so neither can escape the map, which is what the blanket rule is
+   there to guarantee. */
+.leaflet-pane.leaflet-tooltip-pane {
+  z-index: 650 !important;
+}
+.leaflet-pane.leaflet-popup-pane {
+  z-index: 700 !important;
+}
 .leaflet-top, .leaflet-bottom {
   z-index: 1 !important;
 }

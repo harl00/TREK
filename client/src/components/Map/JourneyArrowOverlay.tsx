@@ -34,9 +34,17 @@ function useJourneyPane() {
     if (typeof map?.getPane !== 'function' || typeof map?.createPane !== 'function') return
     if (map.getPane(JOURNEY_PANE)) return
     const pane = map.createPane(JOURNEY_PANE)
-    // Above the day route and the booking arcs (both in the default overlay
-    // pane at 400) and below the booking endpoints at 650, whose labels the
-    // overview should not bury.
+    /**
+     * Nominally above the day route and the booking arcs (both in the default
+     * overlay pane at 400).
+     *
+     * In this app the number is very nearly decoration: index.css flattens
+     * every pane with `.leaflet-pane { z-index: 0 !important }`, so what
+     * actually orders the panes is the order they were created in, and a pane
+     * made on demand like this one is appended after all the built-in ones.
+     * That is why the tooltip and popup panes are given their Leaflet values
+     * back there — without it this layer painted over its own tooltip.
+     */
     pane.style.zIndex = '640'
     // `auto`, not `none`: the pills and the hit lines are the whole point of the
     // hover behaviour. Leaflet gives every non-interactive path

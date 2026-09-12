@@ -49,6 +49,15 @@ describe('journey overview css', () => {
     expect(block('.trek-journey-pill:hover')).toMatch(/z-index:\s*\d+/)
   })
 
+  it('FE-COMP-JOURNEYCSS-007: the tooltip and popup panes outrank the flattened rest', () => {
+    // `.leaflet-pane { z-index: 0 !important }` flattens every pane, so order
+    // falls back to DOM order — and a pane created on demand is appended last.
+    // That put the journey layer over the very tooltip describing it. These two
+    // exemptions are what keep hover chrome on top of any such pane.
+    expect(css).toMatch(/\.leaflet-pane\.leaflet-tooltip-pane\s*\{[^}]*z-index:\s*650\s*!important/)
+    expect(css).toMatch(/\.leaflet-pane\.leaflet-popup-pane\s*\{[^}]*z-index:\s*700\s*!important/)
+  })
+
   it('FE-COMP-JOURNEYCSS-006: the mode glyph inherits the text colour', () => {
     // The icons are serialized with color="currentColor", so the rule only has
     // to size them; a hard-coded fill here would break one of the two themes.
