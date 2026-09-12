@@ -34,4 +34,16 @@ describe('GL hover popup css', () => {
     // the fix above is scoped to the GL hover card on purpose.
     expect(block('.leaflet-popup-tip')).not.toMatch(/display:\s*none/)
   })
+
+  it('FE-COMP-MAPPOPUPCSS-004: tooltip and popup panes outrank the flattened rest', () => {
+    // `.leaflet-pane { z-index: 0 !important }` keeps the map inside its own
+    // stacking context, but it also defeats the z-index every pane sets for
+    // itself — so ordering falls back to DOM order, and a pane created on
+    // demand (the journey overview, the booking endpoints) is appended after
+    // the built-in ones. That put those layers over the very tooltip describing
+    // them. Restoring Leaflet's own two values fixes it for any such pane, and
+    // cannot let either escape the map: both stay inside .leaflet-container.
+    expect(block('.leaflet-pane.leaflet-tooltip-pane')).toMatch(/z-index:\s*650\s*!important/)
+    expect(block('.leaflet-pane.leaflet-popup-pane')).toMatch(/z-index:\s*700\s*!important/)
+  })
 })
