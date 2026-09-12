@@ -1,4 +1,5 @@
 import { createElement, useMemo } from 'react'
+import type { LucideIcon } from 'lucide-react'
 import { renderIconMarkup } from '../../utils/iconMarkup'
 // The planner's own booking-type → icon table. A private copy of the ten
 // transport icons would be the fifth in this tree and the first to go stale.
@@ -114,13 +115,29 @@ function formatDateRange(startIso: string, endIso: string, locale: string): stri
  *
  * `currentColor` so the glyph takes the colour of the text it sits beside,
  * which is what keeps it legible in both themes without a second palette.
+ *
+ * This is the ONE value the pill builders interpolate without escaping — it has
+ * to be, since it is markup — so the gate belongs here rather than at the sink.
+ * An unrecognised mode gets no icon at all: that keeps the guarantee local
+ * ("this function only ever returns one of our own icons") instead of resting
+ * on a TRANSPORT_TYPES check two modules away that a later caller could skip.
+ *
+ * Own-property lookup, not `mode in RES_ICONS`: `in` walks the prototype chain,
+ * so 'constructor' and 'toString' would both resolve to something that is not
+ * an icon — the same trap settings.mcp.ts documents on its own allow-list.
+ * (`hasOwnProperty.call` rather than `Object.hasOwn`, which is ES2022 and past
+ * this workspace's `lib`.)
  */
 const modeIcons = new Map<string, string>()
 function modeIconMarkup(mode: string): string {
   const cached = modeIcons.get(mode)
   if (cached !== undefined) return cached
-  const Icon = (RES_ICONS as Record<string, typeof RES_ICONS.flight | undefined>)[mode] ?? RES_ICONS.other
-  const markup = renderIconMarkup(createElement(Icon, { size: 11, strokeWidth: 2.25, color: 'currentColor' }))
+  const Icon = Object.prototype.hasOwnProperty.call(RES_ICONS, mode)
+    ? (RES_ICONS as Record<string, LucideIcon>)[mode]
+    : null
+  const markup = Icon
+    ? renderIconMarkup(createElement(Icon, { size: 11, strokeWidth: 2.25, color: 'currentColor' }))
+    : ''
   modeIcons.set(mode, markup)
   return markup
 }

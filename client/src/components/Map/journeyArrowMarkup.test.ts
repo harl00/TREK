@@ -131,3 +131,58 @@ describe('stopPillHtml', () => {
     expect(stopPillHtml('Lyon', '')).not.toContain('trek-journey-dates')
   })
 })
+
+/**
+ * `modeIcon` is the one value the pill builders interpolate WITHOUT escaping —
+ * it has to be, because it is markup. These pin the two properties that make
+ * that safe: everything alongside it is escaped, and the icon itself can only
+ * ever be one of ours (gated in useJourneyArrows.modeIconMarkup).
+ */
+describe('pill markup escaping', () => {
+  const HOSTILE = '"><img src=x onerror=alert(1)><span data-x="'
+
+  /** Parse the markup the way a browser will, and report what it actually built. */
+  const parse = (html: string) => {
+    const host = document.createElement('div')
+    host.innerHTML = html
+    return host
+  }
+
+  it('lets no caller string create an element in a leg pill', () => {
+    const host = parse(legPillHtml(HOSTILE, 0, HOSTILE, ''))
+    expect(host.querySelector('img')).toBeNull()
+    // It survives as text, which is the point: escaped, not stripped.
+    expect(host.textContent).toContain('<img src=x onerror=alert(1)>')
+  })
+
+  it('lets no place name create an element in a stop pill', () => {
+    // City labels are derived from imported place addresses and names, so this
+    // is the one genuinely untrusted string in the overview.
+    const host = parse(stopPillHtml(HOSTILE, HOSTILE))
+    expect(host.querySelector('img')).toBeNull()
+    expect(host.textContent).toContain('<img src=x onerror=alert(1)>')
+  })
+
+  it('lets no caller string reach a style attribute', () => {
+    const host = parse(stopPillHtml(HOSTILE, HOSTILE))
+    for (const el of host.querySelectorAll('[style]')) {
+      // Only the module's own colour constants and numbers are interpolated
+      // into style="", so nothing from the caller can appear there.
+      expect(el.getAttribute('style')).not.toMatch(/img|onerror/)
+    }
+  })
+
+  it('carries the mode icon through as real markup, since that is its job', () => {
+    // The one unescaped interpolation. useJourneyArrows.modeIconMarkup is what
+    // guarantees it can only ever be one of the app's own lucide glyphs.
+    const host = parse(legPillHtml('14 Apr', 0, 'Flight', '<svg data-icon="plane"></svg>'))
+    expect(host.querySelector('svg')?.getAttribute('data-icon')).toBe('plane')
+  })
+
+  it('keeps a non-finite bearing inside the style attribute', () => {
+    // pointAlongArc cannot produce one, but a NaN must stay an inert CSS token
+    // rather than escaping the attribute.
+    const host = parse(legPillHtml('', Number.NaN))
+    expect(host.querySelector('.trek-journey-head')?.getAttribute('style')).toContain('rotate(NaNdeg)')
+  })
+})
